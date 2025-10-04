@@ -1,6 +1,6 @@
 # Contribution Graph Pop Quiz 🤖🧠
 
-## Why this exists (the story)
+## Why this exists? (the story)
 
 I wanted a **daily discipline** of contributing to GitHub—but I didn’t want to spam meaningless commits. Instead, I built a **Telegram bot** that sends me a **daily 5-question CS quiz** (DSA, Cloud, Cybersecurity, DevOps, AI/ML, Data Science, General CS). Each finished quiz day **creates 5 lightweight commits** to a repository I control. That way:
 
@@ -10,7 +10,7 @@ I wanted a **daily discipline** of contributing to GitHub—but I didn’t want 
 
 ---
 
-## What this project does
+## ⚙️What this project does
 
 * Telegram bot with commands:
 
@@ -34,7 +34,7 @@ I wanted a **daily discipline** of contributing to GitHub—but I didn’t want 
 
 ---
 
-## Architecture at a glance
+## 📐Architecture at a glance
 
 ```
 main.py                 # Telegram bot, commands, scheduling, webhook/polling
@@ -56,7 +56,7 @@ requirements.txt        # Python dependencies
 
 ---
 
-## Requirements
+## 📄Requirements
 
 * Python 3.11+
 * A Telegram bot token from **BotFather**
@@ -69,7 +69,7 @@ requirements.txt        # Python dependencies
 
 ---
 
-## Installation (local)
+## 📲Installation (local)
 
 ```bash
 # Clone your repo (omit if you already have it locally)
@@ -95,7 +95,7 @@ requests==2.32.3
 
 ---
 
-## Configure environment
+## 💻Configure environment
 
 Create `.env` (do **not** commit this file) based on `.env.example`:
 
@@ -122,7 +122,7 @@ PORT=10000  # Render injects this; you don't need it locally
 
 ---
 
-## Run locally (polling)
+## 🏃‍♂️‍➡️Run locally (polling)
 
 ```bash
 # from your venv
@@ -146,7 +146,7 @@ Now, in Telegram:
 
 ---
 
-## Webhook mode (optional)
+## 🪝Webhook mode (optional)
 
 If you prefer webhook mode, you can run:
 
@@ -163,7 +163,7 @@ Ensure you have:
 
 ---
 
-## Deploy on Render (free)
+## ☁️Deploy on Render (free)
 
 You can run the bot 24/7 on **Render** so you’ll get the daily notification even when your laptop is off.
 
@@ -227,7 +227,7 @@ You can run the bot 24/7 on **Render** so you’ll get the daily notification ev
 
 ---
 
-## How the 5 commits work (and how to make them count)
+## 🐍How the 5 commits work (and how to make them count)
 
 When you answer **all 5 questions** for the day via `/daily`, the bot:
 
@@ -243,7 +243,7 @@ For the commits to **appear on your contribution graph**, ensure:
 
 ---
 
-## Commands reference
+## 📜Commands reference
 
 * `/start` — Welcome
 * `/help` — Show help
@@ -260,7 +260,7 @@ For the commits to **appear on your contribution graph**, ensure:
 
 ---
 
-## Security
+## 🔐Security
 
 * **Never commit `.env`**. It contains your tokens.
 * Use minimal GitHub PAT scopes:
@@ -285,7 +285,7 @@ Thumbs.db
 
 ---
 
-## Troubleshooting
+## 🛠️Troubleshooting
 
 **I don’t get reminders on my phone.**
 
@@ -311,7 +311,7 @@ Thumbs.db
 
 ---
 
-## Contributing / Extending
+## ⛓️‍💥Contributing / Extending
 
 * Add more questions in `questions.py` (simple Python list of QAs).
 * Add categories or difficulty.
@@ -320,12 +320,13 @@ Thumbs.db
 
 ---
 
-## License
+## 💳License
 
 MIT (or your preferred license). Feel free to remix.
 
 ---
 
-## Final notes
+## 🖊️Final notes
 
 This project helped me keep a **daily learning habit**, while giving my GitHub graph **authentic activity**. If you adopt it, consider customizing the question bank to match what you want to learn next. Keep it fun—and keep shipping 💚.
+
