@@ -20,6 +20,7 @@ from telegram.ext import (
     ContextTypes,
 )
 from zoneinfo import ZoneInfo
+from aiohttp import web  # NEW: for webhook server & /healthz
 
 from quiz_engine import QuizEngine
 from storage import (
@@ -43,17 +44,27 @@ logger = logging.getLogger("commit-quiz-bot")
 DAILY_CAP = 5
 DEFAULT_TZ = "Asia/Kolkata"
 
+# === NEW: Webhook/Render config ===
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "defaultsecret")  # set a real one on Render
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")                  # present on Render
+WEBHOOK_PATH = f"/telegram/{WEBHOOK_SECRET}"
+PORT = int(os.getenv("PORT", "8000"))
+
 # -------------------- Keep-alive HTTP server for Render free tier --------------------
 def _start_keepalive():
     """
-    Run a tiny HTTP server in a daemon thread so Render's Web Service stays healthy
-    while we use Telegram long-polling. Exposes /, /health, /healthz endpoints.
+    Run a tiny HTTP server in a daemon thread so local dev stays healthy while using
+    Telegram long-polling. On Render webhook mode, we SKIP this and let PTB bind $PORT.
     """
+    # NEW: Skip keepalive if on Render (webhook mode)
+    if RENDER_URL:
+        return
+
     port = int(os.environ.get("PORT", "8000"))
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
-            # keep logs quieter (Render polls health a lot)
+            # keep logs quieter (Render/health pings a lot)
             return
 
         def do_GET(self):
@@ -71,6 +82,10 @@ def _start_keepalive():
             httpd.serve_forever()
 
     threading.Thread(target=serve, daemon=True).start()
+
+# === NEW: Health endpoint for webhook server ===
+async def _healthz_handler(request: web.Request) -> web.Response:
+    return web.Response(text="ok")
 
 # -------------------- Data models --------------------
 @dataclass
@@ -580,10 +595,10 @@ async def forcecommit(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Contribution Graph Pop Quiz Bot")
-    parser.add_argument("--webhook", action="store_true", help="Enable webhook mode (default polling)")
-    parser.add_argument("--base-url", default=os.environ.get("BASE_URL", ""), help="Public base URL for webhook")
-    parser.add_argument("--path", default=os.environ.get("WEBHOOK_PATH", "/webhook"), help="Webhook path")
-    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")), help="Port to listen on")
+    parser.add_argument("--webhook", action="store_true", help="Force webhook mode (otherwise auto if RENDER url present)")
+    parser.add_argument("--base-url", default=os.environ.get("BASE_URL", ""), help="Public base URL override (for local testing)")
+    parser.add_argument("--path", default=os.environ.get("WEBHOOK_PATH", ""), help="Webhook path override")
+    parser.add_argument("--port", type=int, default=PORT, help="Port to listen on")
     parser.add_argument("--listen", default=os.environ.get("LISTEN", "0.0.0.0"), help="Host to bind")
     args = parser.parse_args()
 
@@ -592,13 +607,10 @@ def main():
         logger.error("Missing BOT_TOKEN. Set it in the environment or .env file.")
         sys.exit(1)
 
-    # Start the tiny HTTP server for Render health checks/keepalive
-    _start_keepalive()
-
     # Ensure DB exists/migrated
     init_db()
 
-    # Build PTB app (polling)
+    # Build PTB app
     application = (
         Application.builder()
         .token(token)
@@ -627,9 +639,42 @@ def main():
     # Rebuild daily jobs from DB so schedules persist across restarts/redeploys
     _reschedule_all_jobs(application)
 
-    # Polling mode (simple, reliable on Render with our keepalive)
-    logger.info("Starting in polling mode")
-    application.run_polling(close_loop=False)
+    # Attach /healthz to PTB's aiohttp server (for webhook mode)
+    try:
+        application.web_app.add_routes([web.get("/healthz", _healthz_handler)])
+    except Exception as e:
+        logger.debug("Could not attach /healthz to PTB web_app yet: %s", e)
+
+    # Decide mode: webhook on Render, polling locally
+    base_url = RENDER_URL or args.base_url
+    path = args.path or WEBHOOK_PATH
+    port = args.port
+    listen = args.listen
+
+    if base_url or args.webhook:
+        # WEBHOOK MODE (Render or forced)
+        if not base_url:
+            logger.error("Webhook requested but no base URL provided.")
+            sys.exit(1)
+
+        webhook_url = f"{base_url}{path}"
+        logger.info("Starting in WEBHOOK mode")
+        logger.info("Public base URL: %s", base_url)
+        logger.info("Webhook path: %s", path)
+        logger.info("Setting webhook to: %s", webhook_url)
+
+        application.run_webhook(
+            listen=listen,
+            port=port,
+            url_path=path,
+            webhook_url=webhook_url,
+            # drop_pending_updates=True,  # optional
+        )
+    else:
+        # POLLING MODE (local/dev). Start tiny keepalive server here only.
+        _start_keepalive()
+        logger.info("Starting in POLLING mode")
+        application.run_polling(close_loop=False)
 
 if __name__ == "__main__":
     main()
