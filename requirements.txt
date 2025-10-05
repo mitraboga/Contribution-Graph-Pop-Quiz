@@ -1,6 +1,6 @@
+python-telegram-bot[webhooks,job-queue,rate-limiter]==21.6
 aiohttp>=3.12.15
 httpx>=0.25.2
-python-telegram-bot[job-queue,rate-limiter]==21.6
 python-dotenv>=1.0.1
 tzdata>=2025.1
 requests>=2.32.3
