@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import logging
+import time
 from contextlib import contextmanager
 from datetime import date, timedelta
 from typing import Optional, Tuple, List, Iterable, Set, Iterator
@@ -15,16 +16,81 @@ DB_PATH = os.environ.get("DB_PATH", "quiz_scores.db")
 
 # ----------------------------- Low-level utils ------------------------------
 
-def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES)
-    conn.row_factory = sqlite3.Row
+def _apply_pragmas(conn: sqlite3.Connection) -> None:
+    """
+    Apply pragmatic settings once per connection.
+    WAL + NORMAL = good durability/perf trade-off for small bots.
+    """
     try:
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.execute("PRAGMA synchronous=NORMAL;")
     except sqlite3.DatabaseError:
+        # If DB is corrupt, these may fail; handled by integrity check.
         pass
+
+def _connect() -> sqlite3.Connection:
+    # check_same_thread=False allows use from PTB JobQueue/background tasks safely
+    conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    _apply_pragmas(conn)
     return conn
+
+def _integrity_ok() -> bool:
+    """
+    Returns True if the DB file exists and PRAGMA integrity_check reports 'ok'.
+    Uses read-only mode (won't create/modify the file).
+    """
+    if not os.path.exists(DB_PATH):
+        return False
+    try:
+        con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, check_same_thread=False)
+        try:
+            row = con.execute("PRAGMA integrity_check;").fetchone()
+            return bool(row) and str(row[0]).lower() == "ok"
+        finally:
+            con.close()
+    except Exception:
+        return False
+
+def _try_rotate_or_remove() -> bool:
+    """
+    On Windows, files can be locked by other processes. Try to rotate (rename) the corrupt DB
+    a few times with small backoff. If that fails, try to remove it. Return True if the file
+    was handled (rotated/removed), False if still locked.
+    """
+    corrupt_path = DB_PATH + ".corrupt"
+    # Try rotation with retries
+    for i in range(5):
+        try:
+            if os.path.exists(corrupt_path):
+                os.remove(corrupt_path)
+            os.replace(DB_PATH, corrupt_path)
+            logger.warning("Corrupt DB rotated to %s; a fresh DB will be created.", corrupt_path)
+            return True
+        except PermissionError:
+            # File is locked by another process. Back off and retry.
+            time.sleep(0.4 * (i + 1))
+        except FileNotFoundError:
+            # Already gone
+            return True
+        except Exception as e:
+            logger.debug("Rotate attempt %d failed: %s", i + 1, e)
+
+    # Fallback: try delete with retries
+    for i in range(5):
+        try:
+            if os.path.exists(DB_PATH):
+                os.remove(DB_PATH)
+                logger.warning("Corrupt DB removed; a fresh DB will be created.")
+            return True
+        except PermissionError:
+            time.sleep(0.4 * (i + 1))
+        except Exception as e:
+            logger.debug("Remove attempt %d failed: %s", i + 1, e)
+
+    return False  # still locked
+
 
 @contextmanager
 def _db() -> sqlite3.Connection:
@@ -142,18 +208,28 @@ def _create_or_migrate_schema(conn: sqlite3.Connection) -> None:
 
 
 def init_db() -> None:
-    try:
-        conn = _connect()
-        conn.execute("SELECT name FROM sqlite_master LIMIT 1;").fetchall()
-    except sqlite3.DatabaseError:
-        if os.path.exists(DB_PATH):
-            os.remove(DB_PATH)
-            logger.warning("Corrupt DB removed and will be recreated: %s", DB_PATH)
-        conn = _connect()
+    """
+    Ensure the DB exists and is valid. If it's corrupt, rotate/remove with retries and rebuild.
+    NOTE (Windows): if the DB is locked by another process (editor/viewer), we will retry.
+    If still locked, we log a clear error so you can close the locker.
+    """
+    # If file exists but is corrupt → rotate/remove with retries
+    if os.path.exists(DB_PATH) and not _integrity_ok():
+        if not _try_rotate_or_remove():
+            logger.error(
+                "The database file %s is locked by another process. "
+                "Close any app using it (VS Code preview/DB Browser/another Python), then run again.",
+                DB_PATH,
+            )
+            raise sqlite3.DatabaseError("quiz_scores.db locked by another process")
 
-    _create_or_migrate_schema(conn)
-    conn.commit()
-    conn.close()
+    # Create/connect and ensure schema
+    conn = _connect()
+    try:
+        _create_or_migrate_schema(conn)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # ----------------------------- Quiz results ---------------------------------
